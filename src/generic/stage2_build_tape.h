@@ -47,11 +47,7 @@ struct unified_machine_addresses {
 #undef FAIL_IF
 #define FAIL_IF(EXPR) { if (EXPR) { return addresses.error; } }
 
-// This is just so we can call parse_string() from parser.parse_string() without conflict.
-WARN_UNUSED really_inline bool
-really_parse_string(const uint8_t *buf, size_t len, ParsedJson &pj, uint32_t depth, uint32_t idx) {
-  return parse_string(buf, len, pj, depth, idx);
-}
+// This is just so we can call parse_number() from parser.parse_number() without conflict.
 WARN_UNUSED really_inline bool
 really_parse_number(const uint8_t *const buf, ParsedJson &pj, const uint32_t offset, bool found_minus) {
   return parse_number(buf, pj, offset, found_minus);
@@ -65,8 +61,9 @@ struct structural_parser {
   size_t idx; // location of the structural character in the input (buf)
   uint8_t c;    // used to track the (structural) character we are looking at
   uint32_t depth = 0; // could have an arbitrary starting depth
+  const uint8_t *next_string;
 
-  really_inline structural_parser(const uint8_t *_buf, size_t _len, ParsedJson &_pj, uint32_t _i = 0) : buf{_buf}, len{_len}, pj{_pj}, i{_i} {}
+  really_inline structural_parser(const uint8_t *_buf, size_t _len, ParsedJson &_pj, uint32_t _i = 0) : buf{_buf}, len{_len}, pj{_pj}, i{_i}, next_string{pj.string_buf.get()} {}
 
   WARN_UNUSED really_inline int set_error_code(ErrorValues error_code) {
     pj.error_code = error_code;
@@ -132,6 +129,7 @@ struct structural_parser {
     pj.annotate_previous_loc(pj.containing_scope_offset[depth], pj.get_current_loc());
     return pj.ret_address[depth];
   }
+
   really_inline void pop_root_scope() {
     // write our tape location to the header scope
     // The root scope gets written *at* the previous location.
@@ -140,8 +138,9 @@ struct structural_parser {
     pj.write_tape(pj.containing_scope_offset[depth], 'r');
   }
 
-  WARN_UNUSED really_inline bool parse_string() {
-    return !really_parse_string(buf, len, pj, depth, idx);
+  really_inline void write_string() {
+    pj.write_tape(next_string - pj.string_buf.get(), '"');
+    next_string += sizeof(uint32_t) + *(uint32_t*)next_string + 1;
   }
 
   WARN_UNUSED really_inline bool parse_number(const uint8_t *copy, uint32_t offset, bool found_minus) {
@@ -176,7 +175,7 @@ struct structural_parser {
   WARN_UNUSED really_inline ret_address parse_value(const unified_machine_addresses &addresses, ret_address continue_state) {
     switch (c) {
     case '"':
-      FAIL_IF( parse_string() );
+      write_string();
       return continue_state;
     case 't': case 'f': case 'n':
       FAIL_IF( parse_atom() );
@@ -257,15 +256,11 @@ struct structural_parser {
   }
 
   WARN_UNUSED really_inline int start(ret_address finish_state) {
-    pj.init(); // sets is_valid to false
-    if (len > pj.byte_capacity) {
-      return CAPACITY;
-    }
     // Advance to the first character as soon as possible
     advance_char();
     // Push the root scope (there is always at least one scope)
     if (push_start_scope(finish_state, 'r')) {
-      return DEPTH_ERROR;
+      return set_error_code(DEPTH_ERROR);
     }
     return SUCCESS;
   }
@@ -275,6 +270,18 @@ struct structural_parser {
 #undef FAIL_IF
 #define FAIL_IF(EXPR) { if (EXPR) { goto error; } }
 
+WARN_UNUSED really_inline int parse_strings(const uint8_t *buf, ParsedJson &pj, uint32_t i=0) {
+  for (; i < pj.n_structural_indexes; i++) {
+    uint32_t idx = pj.structural_indexes[i];
+    if (buf[idx] == '"') {
+      if (!parse_string(buf, idx, pj.current_string_buf_loc)) {
+        return pj.error_code = STRING_ERROR;
+      }
+    }
+  }
+  return SUCCESS;
+}
+
 /************
  * The JSON is parsed to a tape, see the accompanying tape.md file
  * for documentation.
@@ -282,9 +289,27 @@ struct structural_parser {
 WARN_UNUSED  int
 unified_machine(const uint8_t *buf, size_t len, ParsedJson &pj) {
   static constexpr unified_machine_addresses addresses = INIT_ADDRESSES();
+
+  // Set up
+  pj.init(); // sets is_valid to false
+  if (len > pj.byte_capacity) {
+    return pj.error_code = CAPACITY;
+  }
+
+  //
+  // Parse values
+  //
+  if (parse_strings(buf, pj)) {
+    return pj.error_code;
+  }
+
+  //
+  // Parse structurals
+  //
   structural_parser parser(buf, len, pj);
-  int result = parser.start(addresses.finish);
-  if (result) { return result; }
+  if (parser.start(addresses.finish)) {
+    return pj.error_code;
+  }
 
   //
   // Read first value
@@ -297,7 +322,7 @@ unified_machine(const uint8_t *buf, size_t len, ParsedJson &pj) {
     FAIL_IF( parser.push_start_scope(addresses.finish) );
     goto array_begin;
   case '"':
-    FAIL_IF( parser.parse_string() );
+    parser.write_string();
     goto finish;
   case 't': case 'f': case 'n':
     FAIL_IF(
@@ -331,10 +356,9 @@ unified_machine(const uint8_t *buf, size_t len, ParsedJson &pj) {
 object_begin:
   parser.advance_char();
   switch (parser.c) {
-  case '"': {
-    FAIL_IF( parser.parse_string() );
+  case '"':
+    parser.write_string();
     goto object_key_state;
-  }
   case '}':
     goto scope_end; // could also go to object_continue
   default:
@@ -350,7 +374,7 @@ object_continue:
   switch (parser.advance_char()) {
   case ',':
     FAIL_IF( parser.advance_char() != '"' );
-    FAIL_IF( parser.parse_string() );
+    parser.write_string();
     goto object_key_state;
   case '}':
     goto scope_end;

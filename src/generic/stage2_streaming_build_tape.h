@@ -11,7 +11,7 @@ struct streaming_structural_parser: structural_parser {
     advance_char();
     // Push the root scope (there is always at least one scope)
     if (push_start_scope(finish_parser, 'r')) {
-      return DEPTH_ERROR;
+      return set_error_code(DEPTH_ERROR);
     }
     return SUCCESS;
   }
@@ -41,9 +41,27 @@ struct streaming_structural_parser: structural_parser {
 WARN_UNUSED  int
 unified_machine(const uint8_t *buf, size_t len, ParsedJson &pj, size_t &next_json) {
   static constexpr unified_machine_addresses addresses = INIT_ADDRESSES();
+
+  //
+  // Set up
+  //
+  pj.init(); // sets is_valid to false
+
+  //
+  // Parse strings
+  //
+  if (parse_strings(buf, pj, next_json)) {
+    return pj.error_code;
+  }
+
+  //
+  // Parse structurals
+  //
   streaming_structural_parser parser(buf, len, pj, next_json);
-  int result = parser.start(addresses.finish);
-  if (result) { return result; }
+  if (parser.start(addresses.finish)) {
+    return pj.error_code;
+  }
+
   //
   // Read first value
   //
@@ -55,7 +73,7 @@ unified_machine(const uint8_t *buf, size_t len, ParsedJson &pj, size_t &next_jso
     FAIL_IF( parser.push_start_scope(addresses.finish) );
     goto array_begin;
   case '"':
-    FAIL_IF( parser.parse_string() );
+    parser.write_string();
     goto finish;
   case 't': case 'f': case 'n':
     FAIL_IF(
@@ -89,10 +107,9 @@ unified_machine(const uint8_t *buf, size_t len, ParsedJson &pj, size_t &next_jso
 object_begin:
   parser.advance_char();
   switch (parser.c) {
-  case '"': {
-    FAIL_IF( parser.parse_string() );
+  case '"':
+    parser.write_string();
     goto object_key_parser;
-  }
   case '}':
     goto scope_end; // could also go to object_continue
   default:
@@ -108,7 +125,7 @@ object_continue:
   switch (parser.advance_char()) {
   case ',':
     FAIL_IF( parser.advance_char() != '"' );
-    FAIL_IF( parser.parse_string() );
+    parser.write_string();
     goto object_key_parser;
   case '}':
     goto scope_end;
