@@ -56,6 +56,9 @@ unified_machine(const uint8_t *buf, size_t len, ParsedJson &pj, size_t &next_jso
   if (parse_numbers(buf, len, pj, next_json)) {
     return pj.error_code;
   }
+  if (parse_atoms(buf, len, pj, next_json)) {
+    return pj.error_code;
+  }
 
   //
   // Parse structurals
@@ -80,11 +83,7 @@ unified_machine(const uint8_t *buf, size_t len, ParsedJson &pj, size_t &next_jso
     parser.write_string();
     goto finish;
   case 't': case 'f': case 'n':
-    FAIL_IF(
-      parser.with_space_terminated_copy([&](auto copy) {
-        return parser.parse_atom(copy, parser.idx);
-      })
-    );
+    parser.write_atom();
     goto finish;
   case '0': case '1': case '2': case '3': case '4':
   case '5': case '6': case '7': case '8': case '9':

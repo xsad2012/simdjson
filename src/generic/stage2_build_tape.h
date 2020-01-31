@@ -145,26 +145,8 @@ struct structural_parser {
     pj.copy_number_tape();
   }
 
-  WARN_UNUSED really_inline bool parse_atom(const uint8_t *copy, uint32_t offset) {
-    switch (c) {
-      case 't':
-        if (!is_valid_true_atom(copy + offset)) { return true; };
-        break;
-      case 'f':
-        if (!is_valid_false_atom(copy + offset)) { return true; }
-        break;
-      case 'n':
-        if (!is_valid_null_atom(copy + offset)) { return true; }
-        break;
-      default:
-        return false;
-    }
+  really_inline void write_atom() {
     pj.write_tape(0, c);
-    return false;
-  }
-
-  WARN_UNUSED really_inline bool parse_atom() {
-    return parse_atom(buf, idx);
   }
 
   WARN_UNUSED really_inline ret_address parse_value(const unified_machine_addresses &addresses, ret_address continue_state) {
@@ -173,7 +155,7 @@ struct structural_parser {
       write_string();
       return continue_state;
     case 't': case 'f': case 'n':
-      FAIL_IF( parse_atom() );
+      write_atom();
       return continue_state;
     case '0': case '1': case '2': case '3': case '4':
     case '5': case '6': case '7': case '8': case '9':
@@ -276,6 +258,7 @@ WARN_UNUSED really_inline int parse_strings(const uint8_t *buf, ParsedJson &pj, 
 
 WARN_UNUSED really_inline int parse_numbers(const uint8_t *buf, const size_t len, ParsedJson &pj, uint32_t i=0) {
   bool had_error = false;
+
   // If we are the last thing, we need to make a space-terminated copy
   if (i == pj.n_structural_indexes - 2) {
     uint32_t idx = pj.structural_indexes[i];
@@ -303,7 +286,54 @@ WARN_UNUSED really_inline int parse_numbers(const uint8_t *buf, const size_t len
         break;
     }
   }
+
   return had_error ? (pj.error_code = NUMBER_ERROR) : SUCCESS;
+}
+
+WARN_UNUSED really_inline bool parse_atom(const uint8_t *buf, uint32_t idx) {
+  switch (buf[idx]) {
+    case 't':
+      return !is_valid_true_atom(&buf[idx]);
+      break;
+    case 'f':
+      return !is_valid_false_atom(&buf[idx]);
+      break;
+    case 'n':
+      return !is_valid_null_atom(&buf[idx]);
+      break;
+    default:
+      return false;
+  }
+  return false;
+}
+
+WARN_UNUSED really_inline int parse_atoms(const uint8_t *buf, const size_t len, ParsedJson &pj, uint32_t i=0) {
+  bool had_error = false;
+
+  // If we are the last thing, we need to make a space-terminated copy
+  if (i == pj.n_structural_indexes - 2) {
+    uint32_t idx = pj.structural_indexes[i];
+    switch (buf[idx]) {
+      case 't': case 'f': case 'n':
+        had_error |= with_space_terminated_copy(buf, len, [&](auto copy) {
+          return parse_atom(copy, idx);
+        });
+        break;
+    }
+    i++;
+  }
+
+  for (; i < pj.n_structural_indexes - 1; i++) {
+    uint32_t idx = pj.structural_indexes[i];
+    switch (buf[idx]) {
+      case 't': case 'f': case 'n':
+        had_error |= parse_atom(buf, idx);
+        break;
+    }
+  }
+
+  // TODO can't tell which error it is anymore, can we?
+  return had_error ? (pj.error_code = N_ATOM_ERROR) : SUCCESS;
 }
 
 /************
@@ -327,6 +357,9 @@ unified_machine(const uint8_t *buf, size_t len, ParsedJson &pj) {
     return pj.error_code;
   }
   if (parse_numbers(buf, len, pj)) {
+    return pj.error_code;
+  }
+  if (parse_atoms(buf, len, pj)) {
     return pj.error_code;
   }
 
@@ -353,11 +386,7 @@ unified_machine(const uint8_t *buf, size_t len, ParsedJson &pj) {
     parser.write_string();
     goto finish;
   case 't': case 'f': case 'n':
-    FAIL_IF(
-      parser.with_space_terminated_copy([&](auto copy) {
-        return parser.parse_atom(copy, parser.idx);
-      })
-    );
+    parser.write_atom();
     goto finish;
   case '0': case '1': case '2': case '3': case '4':
   case '5': case '6': case '7': case '8': case '9':
