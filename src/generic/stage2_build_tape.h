@@ -47,10 +47,30 @@ struct unified_machine_addresses {
 #undef FAIL_IF
 #define FAIL_IF(EXPR) { if (EXPR) { return addresses.error; } }
 
-// This is just so we can call parse_number() from parser.parse_number() without conflict.
-WARN_UNUSED really_inline bool
-really_parse_number(const uint8_t *const buf, ParsedJson &pj, const uint32_t offset, bool found_minus) {
-  return parse_number(buf, pj, offset, found_minus);
+template<typename F>
+really_inline bool with_space_terminated_copy(const uint8_t *buf, const size_t len, const F& f) {
+  /**
+  * We need to make a copy to make sure that the string is space terminated.
+  * This is not about padding the input, which should already padded up
+  * to len + SIMDJSON_PADDING. However, we have no control at this stage
+  * on how the padding was done. What if the input string was padded with nulls?
+  * It is quite common for an input string to have an extra null character (C string).
+  * We do not want to allow 9\0 (where \0 is the null character) inside a JSON
+  * document, but the string "9\0" by itself is fine. So we make a copy and
+  * pad the input with spaces when we know that there is just one input element.
+  * This copy is relatively expensive, but it will almost never be called in
+  * practice unless you are in the strange scenario where you have many JSON
+  * documents made of single atoms.
+  */
+  char *copy = static_cast<char *>(malloc(len + SIMDJSON_PADDING));
+  if (copy == nullptr) {
+    return true;
+  }
+  memcpy(copy, buf, len);
+  memset(copy + len, ' ', SIMDJSON_PADDING);
+  bool result = f(reinterpret_cast<const uint8_t*>(copy));
+  free(copy);
+  return result;
 }
 
 struct structural_parser {
@@ -61,9 +81,8 @@ struct structural_parser {
   size_t idx; // location of the structural character in the input (buf)
   uint8_t c;    // used to track the (structural) character we are looking at
   uint32_t depth = 0; // could have an arbitrary starting depth
-  const uint8_t *next_string;
 
-  really_inline structural_parser(const uint8_t *_buf, size_t _len, ParsedJson &_pj, uint32_t _i = 0) : buf{_buf}, len{_len}, pj{_pj}, i{_i}, next_string{pj.string_buf.get()} {}
+  really_inline structural_parser(const uint8_t *_buf, size_t _len, ParsedJson &_pj, uint32_t _i = 0) : buf{_buf}, len{_len}, pj{_pj}, i{_i} {}
 
   WARN_UNUSED really_inline int set_error_code(ErrorValues error_code) {
     pj.error_code = error_code;
@@ -78,28 +97,7 @@ struct structural_parser {
 
   template<typename F>
   really_inline bool with_space_terminated_copy(const F& f) {
-    /**
-    * We need to make a copy to make sure that the string is space terminated.
-    * This is not about padding the input, which should already padded up
-    * to len + SIMDJSON_PADDING. However, we have no control at this stage
-    * on how the padding was done. What if the input string was padded with nulls?
-    * It is quite common for an input string to have an extra null character (C string).
-    * We do not want to allow 9\0 (where \0 is the null character) inside a JSON
-    * document, but the string "9\0" by itself is fine. So we make a copy and
-    * pad the input with spaces when we know that there is just one input element.
-    * This copy is relatively expensive, but it will almost never be called in
-    * practice unless you are in the strange scenario where you have many JSON
-    * documents made of single atoms.
-    */
-    char *copy = static_cast<char *>(malloc(len + SIMDJSON_PADDING));
-    if (copy == nullptr) {
-      return true;
-    }
-    memcpy(copy, buf, len);
-    memset(copy + len, ' ', SIMDJSON_PADDING);
-    bool result = f(reinterpret_cast<const uint8_t*>(copy), idx);
-    free(copy);
-    return result;
+    return stage2::with_space_terminated_copy(buf, len, f);
   }
 
   WARN_UNUSED really_inline bool push_start_scope(ret_address continue_state, char type) {
@@ -139,15 +137,12 @@ struct structural_parser {
   }
 
   really_inline void write_string() {
-    pj.write_tape(next_string - pj.string_buf.get(), '"');
-    next_string += sizeof(uint32_t) + *(uint32_t*)next_string + 1;
+    pj.write_tape(pj.current_string_buf_loc - pj.string_buf.get(), '"');
+    pj.current_string_buf_loc += sizeof(uint32_t) + *(uint32_t*)pj.current_string_buf_loc + 1;
   }
 
-  WARN_UNUSED really_inline bool parse_number(const uint8_t *copy, uint32_t offset, bool found_minus) {
-    return !really_parse_number(copy, pj, offset, found_minus);
-  }
-  WARN_UNUSED really_inline bool parse_number(bool found_minus) {
-    return parse_number(buf, idx, found_minus);
+  really_inline void write_number() {
+    pj.copy_number_tape();
   }
 
   WARN_UNUSED really_inline bool parse_atom(const uint8_t *copy, uint32_t offset) {
@@ -182,10 +177,8 @@ struct structural_parser {
       return continue_state;
     case '0': case '1': case '2': case '3': case '4':
     case '5': case '6': case '7': case '8': case '9':
-      FAIL_IF( parse_number(false) );
-      return continue_state;
     case '-':
-      FAIL_IF( parse_number(true) );
+      write_number();
       return continue_state;
     case '{':
       FAIL_IF( push_scope(continue_state) );
@@ -271,15 +264,46 @@ struct structural_parser {
 #define FAIL_IF(EXPR) { if (EXPR) { goto error; } }
 
 WARN_UNUSED really_inline int parse_strings(const uint8_t *buf, ParsedJson &pj, uint32_t i=0) {
-  for (; i < pj.n_structural_indexes; i++) {
+  bool had_error = false;
+  for (; i < pj.n_structural_indexes - 1; i++) {
     uint32_t idx = pj.structural_indexes[i];
     if (buf[idx] == '"') {
-      if (!parse_string(buf, idx, pj.current_string_buf_loc)) {
-        return pj.error_code = STRING_ERROR;
-      }
+      had_error |= !parse_string(buf, idx, pj.current_string_buf_loc);
     }
   }
-  return SUCCESS;
+  return had_error ? (pj.error_code = STRING_ERROR) : SUCCESS;
+}
+
+WARN_UNUSED really_inline int parse_numbers(const uint8_t *buf, const size_t len, ParsedJson &pj, uint32_t i=0) {
+  bool had_error = false;
+  // If we are the last thing, we need to make a space-terminated copy
+  if (i == pj.n_structural_indexes - 2) {
+    uint32_t idx = pj.structural_indexes[i];
+    switch (buf[idx]) {
+      case '0': case '1': case '2': case '3': case '4':
+      case '5': case '6': case '7': case '8': case '9':
+        had_error |= with_space_terminated_copy(buf, len, [&](auto copy) { return !parse_number(copy, pj, idx, false); });
+        break;
+      case '-':
+        had_error |= with_space_terminated_copy(buf, len, [&](auto copy) { return !parse_number(copy, pj, idx, true); });
+        break;
+    }
+    i++;
+  }
+
+  for (; i < pj.n_structural_indexes - 1; i++) {
+    uint32_t idx = pj.structural_indexes[i];
+    switch (buf[idx]) {
+      case '0': case '1': case '2': case '3': case '4':
+      case '5': case '6': case '7': case '8': case '9':
+        had_error |= !parse_number(buf, pj, idx, false);
+        break;
+      case '-':
+        had_error |= !parse_number(buf, pj, idx, true);
+        break;
+    }
+  }
+  return had_error ? (pj.error_code = NUMBER_ERROR) : SUCCESS;
 }
 
 /************
@@ -302,10 +326,14 @@ unified_machine(const uint8_t *buf, size_t len, ParsedJson &pj) {
   if (parse_strings(buf, pj)) {
     return pj.error_code;
   }
+  if (parse_numbers(buf, len, pj)) {
+    return pj.error_code;
+  }
 
   //
   // Parse structurals
   //
+  pj.init(); // resets buf/tape locations
   structural_parser parser(buf, len, pj);
   if (parser.start(addresses.finish)) {
     return pj.error_code;
@@ -326,25 +354,15 @@ unified_machine(const uint8_t *buf, size_t len, ParsedJson &pj) {
     goto finish;
   case 't': case 'f': case 'n':
     FAIL_IF(
-      parser.with_space_terminated_copy([&](auto copy, auto idx) {
-        return parser.parse_atom(copy, idx);
+      parser.with_space_terminated_copy([&](auto copy) {
+        return parser.parse_atom(copy, parser.idx);
       })
     );
     goto finish;
   case '0': case '1': case '2': case '3': case '4':
   case '5': case '6': case '7': case '8': case '9':
-    FAIL_IF(
-      parser.with_space_terminated_copy([&](auto copy, auto idx) {
-        return parser.parse_number(copy, idx, false);
-      })
-    );
-    goto finish;
   case '-':
-    FAIL_IF(
-      parser.with_space_terminated_copy([&](auto copy, auto idx) {
-        return parser.parse_number(copy, idx, true);
-      })
-    );
+    parser.write_number();
     goto finish;
   default:
     goto error;

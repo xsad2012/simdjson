@@ -79,22 +79,31 @@ public:
     tape[current_loc++] = val | ((static_cast<uint64_t>(c)) << 56);
   }
 
-  really_inline void write_tape_s64(int64_t i) {
-    write_tape(0, 'l');
-    std::memcpy(&tape[current_loc], &i, sizeof(i));
-    ++current_loc;
+  really_inline void copy_number_tape() {
+    tape[current_loc++] = number_tape[current_number_loc++];
+    tape[current_loc++] = number_tape[current_number_loc++];
   }
 
-  really_inline void write_tape_u64(uint64_t i) {
-    write_tape(0, 'u');
-    tape[current_loc++] = i;
+  really_inline void write_number_tape(uint64_t val, uint8_t c) {
+    number_tape[current_number_loc++] = val | ((static_cast<uint64_t>(c)) << 56);
   }
 
-  really_inline void write_tape_double(double d) {
-    write_tape(0, 'd');
-    static_assert(sizeof(d) == sizeof(tape[current_loc]), "mismatch size");
-    memcpy(&tape[current_loc++], &d, sizeof(double));
-    // tape[current_loc++] = *((uint64_t *)&d);
+  really_inline void write_number_tape_s64(int64_t i) {
+    write_number_tape(0, 'l');
+    std::memcpy(&number_tape[current_number_loc], &i, sizeof(i));
+    ++current_number_loc;
+  }
+
+  really_inline void write_number_tape_u64(uint64_t i) {
+    write_number_tape(0, 'u');
+    number_tape[current_number_loc++] = i;
+  }
+
+  really_inline void write_number_tape_double(double d) {
+    write_number_tape(0, 'd');
+    static_assert(sizeof(d) == sizeof(number_tape[current_number_loc]), "mismatch size");
+    memcpy(&number_tape[current_number_loc++], &d, sizeof(double));
+    // number_tape[current_number_loc++] = *((uint64_t *)&d);
   }
 
   really_inline uint32_t get_current_loc() const { return current_loc; }
@@ -116,11 +125,13 @@ public:
   size_t tape_capacity{0};
   size_t string_capacity{0};
   uint32_t current_loc{0};
+  uint32_t current_number_loc{0};
   uint32_t n_structural_indexes{0};
 
   std::unique_ptr<uint32_t[]> structural_indexes;
 
   std::unique_ptr<uint64_t[]> tape;
+  std::unique_ptr<uint64_t[]> number_tape;
   std::unique_ptr<uint32_t[]> containing_scope_offset;
 
 #ifdef SIMDJSON_USE_COMPUTED_GOTO

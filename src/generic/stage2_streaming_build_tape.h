@@ -53,10 +53,14 @@ unified_machine(const uint8_t *buf, size_t len, ParsedJson &pj, size_t &next_jso
   if (parse_strings(buf, pj, next_json)) {
     return pj.error_code;
   }
+  if (parse_numbers(buf, len, pj, next_json)) {
+    return pj.error_code;
+  }
 
   //
   // Parse structurals
   //
+  pj.init(); // resets buf/tape locations
   streaming_structural_parser parser(buf, len, pj, next_json);
   if (parser.start(addresses.finish)) {
     return pj.error_code;
@@ -77,25 +81,15 @@ unified_machine(const uint8_t *buf, size_t len, ParsedJson &pj, size_t &next_jso
     goto finish;
   case 't': case 'f': case 'n':
     FAIL_IF(
-      parser.with_space_terminated_copy([&](auto copy, auto idx) {
-        return parser.parse_atom(copy, idx);
+      parser.with_space_terminated_copy([&](auto copy) {
+        return parser.parse_atom(copy, parser.idx);
       })
     );
     goto finish;
   case '0': case '1': case '2': case '3': case '4':
   case '5': case '6': case '7': case '8': case '9':
-    FAIL_IF(
-      parser.with_space_terminated_copy([&](auto copy, auto idx) {
-        return parser.parse_number(copy, idx, false);
-      })
-    );
-    goto finish;
   case '-':
-    FAIL_IF(
-      parser.with_space_terminated_copy([&](auto copy, auto idx) {
-        return parser.parse_number(copy, idx, true);
-      })
-    );
+    parser.write_number();
     goto finish;
   default:
     goto error;

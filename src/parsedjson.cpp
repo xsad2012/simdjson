@@ -35,6 +35,7 @@ bool ParsedJson::allocate_capacity(size_t len, size_t max_depth) {
   size_t local_string_capacity = ROUNDUP_N(5 * len / 3 + 32, 64);
   string_buf.reset( new (std::nothrow) uint8_t[local_string_capacity]);
   tape.reset(new (std::nothrow) uint64_t[local_tape_capacity]);
+  number_tape.reset( new (std::nothrow) uint64_t[local_tape_capacity]);
   containing_scope_offset.reset(new (std::nothrow) uint32_t[max_depth]);
 #ifdef SIMDJSON_USE_COMPUTED_GOTO
   //ret_address = new (std::nothrow) void *[max_depth];
@@ -42,7 +43,7 @@ bool ParsedJson::allocate_capacity(size_t len, size_t max_depth) {
 #else
   ret_address.reset(new (std::nothrow) char[max_depth]);
 #endif
-  if (!string_buf || !tape ||
+  if (!string_buf || !number_tape || !tape ||
       !containing_scope_offset || !ret_address ||
       !structural_indexes) {
     // Could not allocate memory
@@ -54,6 +55,7 @@ bool ParsedJson::allocate_capacity(size_t len, size_t max_depth) {
   memset(string_buf, 0 , local_string_capacity);
   memset(structural_indexes, 0, max_structures * sizeof(uint32_t));
   memset(tape, 0, local_tape_capacity * sizeof(uint64_t));
+  memset(number_tape, 0 , local_tape_capacity * sizeof(uint64_t));
   */
   byte_capacity = len;
   depth_capacity = max_depth;
@@ -78,6 +80,7 @@ void ParsedJson::deallocate() {
   ret_address.reset();
   containing_scope_offset.reset();
   tape.reset();
+  number_tape.reset();
   string_buf.reset();
   structural_indexes.reset();
   valid = false;
@@ -85,6 +88,7 @@ void ParsedJson::deallocate() {
 
 void ParsedJson::init() {
   current_string_buf_loc = string_buf.get();
+  current_number_loc = 0;
   current_loc = 0;
   valid = false;
 }
