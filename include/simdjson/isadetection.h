@@ -56,20 +56,27 @@ POSSIBILITY OF SUCH DAMAGE.
 
 namespace simdjson {
 // Can be found on Intel ISA Reference for CPUID
-constexpr uint32_t cpuid_avx2_bit = 1 << 5;      // Bit 5 of EBX for EAX=0x7
-constexpr uint32_t cpuid_bmi1_bit = 1 << 3;      // bit 3 of EBX for EAX=0x7
-constexpr uint32_t cpuid_bmi2_bit = 1 << 8;      // bit 8 of EBX for EAX=0x7
-constexpr uint32_t cpuid_sse42_bit = 1 << 20;    // bit 20 of ECX for EAX=0x1
-constexpr uint32_t cpuid_pclmulqdq_bit = 1 << 1; // bit  1 of ECX for EAX=0x1
+// https://en.wikipedia.org/wiki/CPUID does a pretty good job too
+constexpr uint32_t cpuid_avx2_bit      = 1 <<  5; // bit  5 of EBX for EAX=0x7
+constexpr uint32_t cpuid_bmi1_bit      = 1 <<  3; // bit  3 of EBX for EAX=0x7
+constexpr uint32_t cpuid_bmi2_bit      = 1 <<  8; // bit  8 of EBX for EAX=0x7
+constexpr uint32_t cpuid_avx512_f_bit  = 1 << 16; // bit 16 of EBX for EAX=0x7
+constexpr uint32_t cpuid_avx512_bw_bit = 1 << 30; // bit 30 of EBX for EAX=0x7
+constexpr uint32_t cpuid_avx512_vl_bit = 1 << 31; // bit 31 of EBX for EAX=0x7
+constexpr uint32_t cpuid_pclmulqdq_bit = 1 <<  1; // bit  1 of ECX for EAX=0x1
+constexpr uint32_t cpuid_sse42_bit     = 1 << 20; // bit 20 of ECX for EAX=0x1
 
 enum instruction_set {
-  DEFAULT = 0x0,
-  NEON = 0x1,
-  AVX2 = 0x4,
-  SSE42 = 0x8,
-  PCLMULQDQ = 0x10,
-  BMI1 = 0x20,
-  BMI2 = 0x40
+  DEFAULT   = 0,
+  NEON      = 1 << 0,
+  AVX2      = 1 << 2,
+  SSE42     = 1 << 3,
+  PCLMULQDQ = 1 << 4,
+  BMI1      = 1 << 5,
+  BMI2      = 1 << 6,
+  AVX512_F  = 1 << 7,
+  AVX512_VL = 1 << 8,
+  AVX512_BW = 1 << 9
 };
 
 #if defined(__arm__) || defined(__aarch64__) // incl. armel, armhf, arm64
@@ -89,8 +96,7 @@ static inline uint32_t detect_supported_architectures() {
 #endif
 
 #else // x86
-static inline void cpuid(uint32_t *eax, uint32_t *ebx, uint32_t *ecx,
-                         uint32_t *edx) {
+static inline void cpuid(uint32_t *eax, uint32_t *ebx, uint32_t *ecx, uint32_t *edx) {
 #if defined(_MSC_VER)
   int cpu_info[4];
   __cpuid(cpu_info, *eax);
@@ -127,9 +133,14 @@ static inline uint32_t detect_supported_architectures() {
   if (ebx & cpuid_bmi1_bit) {
     host_isa |= instruction_set::BMI1;
   }
-
   if (ebx & cpuid_bmi2_bit) {
     host_isa |= instruction_set::BMI2;
+  }
+  if (ebx & cpuid_avx512_vl_bit) {
+    host_isa |= instruction_set::AVX512_VL;
+  }
+  if (ebx & cpuid_avx512_bm_bit) {
+    host_isa |= instruction_set::AVX512_BM;
   }
 
   // EBX for EAX=0x1

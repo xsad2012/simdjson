@@ -20,7 +20,6 @@ namespace simdjson::arm64::simd {
   template<typename T, typename Mask=simd8<bool>>
   struct base_u8 {
     uint8x16_t value;
-    static const int SIZE = sizeof(value);
 
     // Conversion from/to SIMD register
     really_inline base_u8(const uint8x16_t _value) : value(_value) {}

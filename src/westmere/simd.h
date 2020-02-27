@@ -51,8 +51,6 @@ namespace simdjson::westmere::simd {
 
     really_inline Mask operator==(const simd8<T> other) const { return _mm_cmpeq_epi8(*this, other); }
 
-    static const int SIZE = sizeof(base<simd8<T>>::value);
-
     template<int N=1>
     really_inline simd8<T> prev(const simd8<T> prev_chunk) const {
       return _mm_alignr_epi8(*this, prev_chunk, 16 - N);

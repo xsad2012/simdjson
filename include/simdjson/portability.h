@@ -47,9 +47,15 @@
 #define UNTARGET_REGION
 #endif
 
-// under GCC and CLANG, we use these two macros
-#define TARGET_HASWELL TARGET_REGION("avx2,bmi,pclmul,lzcnt")
-#define TARGET_WESTMERE TARGET_REGION("sse4.2,pclmul")
+// under GCC and CLANG, we use these macros to generate architecture-specific implementations
+// Skylake X adds AVX-512 F, VL and BW instructions, as well as an official add+carry (adcx)
+#define TARGET_SKYLAKE_X TARGET_REGION("sse4.2,pclmul,popcnt,avx2,bmi,lzcnt,bmi2,adcx,avx512f,avx512vl,avx512bw")
+// Haswell adds AVX2, as well as BMI and LZCNT for bit twiddling. TODO BMI2? We require BMI2 in architecture detection, are we missing out by not compiling to it?
+#define TARGET_HASWELL   TARGET_REGION("sse4.2,pclmul,popcnt,avx2,bmi,lzcnt")
+// Westmere has sse4.2 and PCLMUL. TODO BMI? _blsr_u64 is used, is it emulated or something?
+#define TARGET_WESTMERE  TARGET_REGION("sse4.2,pclmul,popcnt")
+// All x86-64 machines. All such machines have sse2 but not popcnt or pclmul.
+#define TARGET_X86_64    TARGET_REGION("sse2")
 #define TARGET_ARM64
 
 // Threading is disabled

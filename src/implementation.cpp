@@ -8,13 +8,15 @@
 
 #ifdef IS_X86_64
 
+#include "skylake_x/implementation.h"
 #include "haswell/implementation.h"
 #include "westmere/implementation.h"
 
 namespace simdjson {
+  const skylake_x::implementation skylake_x_singleton{};
   const haswell::implementation haswell_singleton{};
   const westmere::implementation westmere_singleton{};
-  constexpr const std::initializer_list<const implementation *> available_implementation_pointers { &haswell_singleton, &westmere_singleton };
+  constexpr const std::initializer_list<const implementation *> available_implementation_pointers { &skylake_x_singleton, &haswell_singleton, &westmere_singleton };
 }
 
 #endif

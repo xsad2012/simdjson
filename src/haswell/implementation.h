@@ -14,7 +14,7 @@ class implementation final : public simdjson::implementation {
 public:
   really_inline implementation() : simdjson::implementation(
       "haswell",
-      "Intel/AMD AVX2",
+      "Intel/AMD AVX2 (Haswell and up)",
       instruction_set::AVX2 | instruction_set::PCLMULQDQ | instruction_set::BMI1 | instruction_set::BMI2
   ) {}
   WARN_UNUSED error_code parse(const uint8_t *buf, size_t len, document::parser &parser) const noexcept final;
